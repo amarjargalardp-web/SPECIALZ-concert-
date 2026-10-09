@@ -1284,7 +1284,8 @@
     if (qs.get('peerhost')) { o.host = qs.get('peerhost'); o.port = Number(qs.get('peerport') || 443); o.path = qs.get('peerpath') || '/'; o.secure = qs.get('peersecure') !== '0'; }
     return o;
   }
-  const insideClaude = /claude\.ai$|claudeusercontent\.com$|claude\.site$/.test(location.hostname);
+  const framed = (() => { try { return window.self !== window.top; } catch (e) { return true; } })();
+  const insideClaude = framed || /claude\.ai$|claudeusercontent\.com$|claude\.site$/.test(location.hostname);
   const phoneBase = $('#phoneBase');
   function defaultPhoneBase() {
     if (/^https?:$/.test(location.protocol) && !insideClaude) return new URL('phone.html', location.href).href.split('?')[0];
