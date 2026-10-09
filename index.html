@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SPECIALZ Stage</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+<style>
+  /* Two-door launcher: the stage computer and the camera phone. */
+  :root {
+    --bg: #000; --card: #0f0c0d; --text: #efe9e4; --muted: #9d948e; --line: #2d2729; --accent: #ff1e1e;
+    --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-display: Orbitron, "Arial Black", sans-serif;
+    color-scheme: dark;
+  }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font-family: var(--font-body); }
+  main { max-width: 760px; margin: 0 auto; padding: 48px 16px; display: grid; gap: 20px; }
+  h1 { font: 900 clamp(28px, 7vw, 52px)/1 var(--font-display); letter-spacing: .06em; margin: 0; text-wrap: balance; }
+  h1 span { color: var(--accent); }
+  p { color: var(--muted); line-height: 1.55; margin: 0; max-width: 62ch; }
+  .doors { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  a.door {
+    display: grid; gap: 8px; padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--card);
+    color: var(--text); text-decoration: none; min-width: 0;
+  }
+  a.door:hover, a.door:focus-visible { border-color: var(--accent); outline: none; }
+  a.door strong { font: 700 18px var(--font-display); letter-spacing: .06em; text-transform: uppercase; }
+  a.door span { color: var(--muted); font-size: 14px; line-height: 1.5; }
+  a.door em { font-style: normal; color: var(--accent); font-weight: 600; font-size: 14px; }
+  ol { color: var(--muted); line-height: 1.7; margin: 0; padding-left: 20px; }
+  ol b { color: var(--text); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>SPECIALZ <span>stage</span></h1>
+  <p>Keyboard-driven backdrop visuals for the projector, with a live feed from a phone camera.</p>
+  <div class="doors">
+    <a class="door" href="Special_project_SPECIALZ.html"><strong>Computer</strong><span>Open on the laptop that drives the projector. Shows the visuals and the phone's code and QR code.</span><em>Open the stage program →</em></a>
+    <a class="door" href="phone.html"><strong>Phone</strong><span>Open on the phone that films the band. Sends its camera live to the stage program.</span><em>Open the phone camera →</em></a>
+  </div>
+  <ol>
+    <li>On the computer, open the stage program, press <b>F</b> for fullscreen. The panel shows a 4-letter code and a QR code.</li>
+    <li>On the phone, scan the QR code (or open the phone page and type the code), then tap <b>Start camera and connect</b>.</li>
+    <li>Press <b>C</b> on the computer to put the phone on screen, <b>V</b> to change its look, <b>X</b> to mix it over the visuals.</li>
+  </ol>
+</main>
+</body>
+</html>

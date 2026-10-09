@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>SPECIALZ Phone Camera</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@500;700&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+<style>
+  /* Camera viewfinder with a control sheet at the bottom; big thumb targets for use at a gig. */
+  :root {
+    --bg: #000;
+    --sheet: rgba(12, 10, 11, 0.94);
+    --text: #f0ebe6;
+    --muted: #a39a94;
+    --line: #322b2d;
+    --accent: #ff1e1e;
+    --ok: #39d98a;
+    --warn: #ffb020;
+    --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    --font-display: Orbitron, "Arial Black", sans-serif;
+    color-scheme: dark;
+  }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--font-body); overflow: hidden; }
+  video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
+  .top {
+    position: fixed; left: 0; right: 0; top: 0; display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    padding: calc(env(safe-area-inset-top, 0px) + 12px) 16px 12px; background: linear-gradient(rgba(0,0,0,.65), rgba(0,0,0,0));
+  }
+  .pill { display: inline-flex; align-items: center; gap: 8px; font: 600 13px var(--font-body); background: rgba(0,0,0,.6); border: 1px solid var(--line); padding: 6px 10px; border-radius: 999px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.err { background: var(--accent); }
+  .tally { font: 900 13px var(--font-display); letter-spacing: .12em; padding: 7px 12px; border-radius: 4px; background: var(--accent); color: #fff; }
+  .tally[hidden] { display: none; }
+  body.live-on-screen::after { content: ""; position: fixed; inset: 0; border: 6px solid var(--accent); pointer-events: none; }
+
+  .sheet {
+    position: fixed; left: 0; right: 0; bottom: 0; background: var(--sheet); border-top: 1px solid var(--line);
+    padding: 16px 16px calc(env(safe-area-inset-bottom, 0px) + 16px); display: grid; gap: 12px;
+  }
+  .sheet h1 { margin: 0; font: 900 18px var(--font-display); letter-spacing: .08em; text-transform: uppercase; }
+  .sheet p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.45; max-width: 60ch; }
+  .field { display: grid; gap: 6px; }
+  label { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  input, select {
+    font: 700 24px var(--font-mono); letter-spacing: .3em; text-transform: uppercase; background: #000; color: var(--text);
+    border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; width: 100%; box-sizing: border-box;
+  }
+  select { font: 600 16px var(--font-body); letter-spacing: 0; text-transform: none; }
+  input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  button {
+    font: 600 16px var(--font-body); background: var(--accent); color: #fff; border: 0; border-radius: 6px;
+    padding: 14px 16px; min-height: 48px; cursor: pointer; touch-action: manipulation;
+  }
+  button.ghost { background: rgba(0,0,0,.55); border: 1px solid var(--line); }
+  button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  button:disabled { opacity: .5; }
+  .msg { min-height: 1.2em; color: var(--text); font-size: 14px; }
+  .msg.err { color: #ff8a80; }
+  .bar {
+    position: fixed; left: 0; right: 0; bottom: 0; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 10px;
+    padding: 12px 16px calc(env(safe-area-inset-bottom, 0px) + 12px); background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,.75));
+  }
+  .stats { position: fixed; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 84px); font: 500 11px var(--font-mono); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px #000; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<video id="v" playsinline muted autoplay></video>
+
+<div class="top">
+  <span class="pill"><span class="dot" id="dot"></span><span id="state">Not connected</span></span>
+  <span class="tally" id="tally" hidden>ON SCREEN</span>
+</div>
+
+<form class="sheet" id="sheet" autocomplete="off">
+  <h1>Phone camera</h1>
+  <p>Sends this phone's camera live to the SPECIALZ stage program. Type the 4-letter code shown on the computer, or scan its QR code.</p>
+  <div class="two">
+    <div class="field"><label for="code">Stage code</label><input id="code" name="code" maxlength="4" inputmode="text" autocapitalize="characters" spellcheck="false" placeholder="K7Q2" required></div>
+    <div class="field"><label for="res">Quality</label>
+      <select id="res"><option value="720">720p, smooth</option><option value="1080">1080p, sharp</option><option value="480">480p, weak Wi-Fi</option></select>
+    </div>
+  </div>
+  <button id="go" type="submit">Start camera and connect</button>
+  <p class="msg" id="msg" role="status" aria-live="polite"></p>
+</form>
+
+<div class="bar" id="bar" hidden>
+  <button class="ghost" id="flip" type="button">Flip camera</button>
+  <button class="ghost" id="light" type="button">Torch</button>
+  <button class="ghost" id="stop" type="button">Stop</button>
+</div>
+<div class="stats" id="stats" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"></script>
+<script>
+(() => {
+  'use strict';
+  const $ = s => document.querySelector(s);
+  const PREFIX = 'specialz-stage-';
+  const qs = new URLSearchParams(location.search);
+  const video = $('#v'), codeIn = $('#code'), resSel = $('#res'), msg = $('#msg');
+  const RES = { 480: [854, 480, 1.2e6], 720: [1280, 720, 2.5e6], 1080: [1920, 1080, 4.5e6] };
+  let stream = null, peer = null, call = null, conn = null, facing = 'environment', want = false, retryTimer = 0, torchOn = false, wakeLock = null, statsTimer = 0;
+
+  const saved = (() => { try { return JSON.parse(localStorage.getItem('specialz-phone') || '{}'); } catch (e) { return {}; } })();
+  const save = patch => { try { localStorage.setItem('specialz-phone', JSON.stringify(Object.assign(saved, patch))); } catch (e) {} };
+  codeIn.value = (qs.get('room') || saved.code || '').toUpperCase().slice(0, 4);
+  if (saved.res) resSel.value = saved.res;
+  if (saved.facing) facing = saved.facing;
+
+  function peerOptions() {
+    const o = { debug: 0 };
+    if (qs.get('peerhost')) { o.host = qs.get('peerhost'); o.port = Number(qs.get('peerport') || 443); o.path = qs.get('peerpath') || '/'; o.secure = qs.get('peersecure') !== '0'; }
+    return o;
+  }
+  function state(kind, text) { $('#dot').className = 'dot ' + kind; $('#state').textContent = text; }
+  function say(text, err) { msg.textContent = text; msg.classList.toggle('err', !!err); }
+
+  async function openCamera() {
+    const [w, h] = RES[resSel.value] || RES[720];
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: facing }, width: { ideal: w }, height: { ideal: h }, frameRate: { ideal: 30, max: 30 } }
+    });
+    const track = stream.getVideoTracks()[0];
+    if (track && 'contentHint' in track) track.contentHint = 'motion';
+    video.srcObject = stream; video.play().catch(() => {});
+    video.style.transform = facing === 'user' ? 'scaleX(-1)' : '';
+    torchOn = false;
+    const caps = track && track.getCapabilities ? track.getCapabilities() : {};
+    $('#light').hidden = !caps.torch;
+    return stream;
+  }
+
+  async function start(e) {
+    if (e) e.preventDefault();
+    const code = codeIn.value.trim().toUpperCase();
+    if (!/^[A-Z0-9]{4}$/.test(code)) { say('Type the 4-character code from the computer screen.', true); codeIn.focus(); return; }
+    if (!window.isSecureContext || !navigator.mediaDevices) { say('The camera only works when this page is opened over https.', true); return; }
+    if (!window.Peer) { say('The connection library did not load. Check the internet connection and reload.', true); return; }
+    save({ code, res: resSel.value });
+    $('#go').disabled = true; say('Opening the camera…');
+    try { await openCamera(); }
+    catch (err) { $('#go').disabled = false; say(err.name === 'NotAllowedError' ? 'Camera permission was denied. Allow camera access for this site in the browser settings, then try again.' : 'Could not open the camera: ' + (err.message || err.name), true); return; }
+    want = true;
+    $('#sheet').hidden = true; $('#bar').hidden = false; $('#stats').hidden = false;
+    $('#go').disabled = false;
+    keepAwake();
+    connect();
+  }
+
+  function connect() {
+    clearTimeout(retryTimer);
+    if (!want) return;
+    const code = codeIn.value.trim().toUpperCase();
+    state('warn', 'Connecting to stage ' + code + '…');
+    if (!peer || peer.destroyed) {
+      peer = new window.Peer(undefined, peerOptions());
+      peer.on('open', dial);
+      peer.on('error', onError);
+      peer.on('disconnected', () => { if (want && peer && !peer.destroyed) setTimeout(() => { try { peer.reconnect(); } catch (e) { retry(); } }, 1200); });
+    } else if (peer.open) dial();
+    else if (peer.disconnected) { try { peer.reconnect(); } catch (e) { peer.destroy(); retry(); } }
+  }
+
+  function dial() {
+    if (!want) return;
+    const code = codeIn.value.trim().toUpperCase();
+    if (call) { const old = call; call = null; try { old.close(); } catch (e) {} }
+    if (conn) { const old = conn; conn = null; try { old.close(); } catch (e) {} }
+    const c = peer.call(PREFIX + code, stream);
+    if (!c) { retry(); return; }
+    call = c;
+    c.on('close', () => { if (call === c) { call = null; setTally(false); state('warn', 'Stage closed the link. Reconnecting…'); retry(); } });
+    c.on('error', () => { if (call === c) retry(); });
+    const watch = () => {
+      const pc = c.peerConnection;
+      if (!pc) { setTimeout(watch, 100); return; }
+      pc.addEventListener('connectionstatechange', () => {
+        if (call !== c) return;
+        if (pc.connectionState === 'connected') { state('ok', 'Live to stage ' + code); tuneBitrate(pc); }
+        else if (pc.connectionState === 'failed') { state('err', 'Connection failed. Retrying…'); retry(); }
+        else if (pc.connectionState === 'disconnected') state('warn', 'Signal weak. Holding on…');
+      });
+    };
+    watch();
+    conn = peer.connect(PREFIX + code, { reliable: true });
+    conn.on('data', d => { if (d && d.type === 'tally') setTally(!!d.live); });
+  }
+
+  function onError(err) {
+    const code = codeIn.value.trim().toUpperCase();
+    if (err.type === 'peer-unavailable') { state('err', 'No stage with code ' + code); say('No stage program with code ' + code + ' is online. Check the code on the computer. Retrying…', true); retry(4000); return; }
+    if (err.type === 'browser-incompatible') { state('err', 'Browser not supported'); say('This browser cannot send live video. Use Safari on iPhone or Chrome on Android.', true); stop(); return; }
+    state('err', 'Can’t reach the relay'); say('Can’t reach the connection relay. Check that the phone has internet. Retrying…', true);
+    if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
+    retry(3000);
+  }
+  function retry(ms = 2500) { if (!want) return; clearTimeout(retryTimer); retryTimer = setTimeout(connect, ms); }
+
+  function tuneBitrate(pc) {
+    const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+    if (!sender || !sender.getParameters) return;
+    const p = sender.getParameters();
+    if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+    p.encodings[0].maxBitrate = (RES[resSel.value] || RES[720])[2];
+    p.encodings[0].maxFramerate = 30;
+    sender.setParameters(p).catch(() => {});
+    clearInterval(statsTimer);
+    let lastBytes = 0, lastT = 0;
+    statsTimer = setInterval(async () => {
+      if (!pc || pc.connectionState === 'closed') return;
+      try {
+        const rep = await sender.getStats(); let out = '';
+        rep.forEach(r => {
+          if (r.type === 'outbound-rtp' && r.kind === 'video') {
+            const kbps = lastT ? Math.round((r.bytesSent - lastBytes) * 8 / (r.timestamp - lastT)) : 0;
+            lastBytes = r.bytesSent; lastT = r.timestamp;
+            out = `${r.frameWidth || '?'}×${r.frameHeight || '?'} · ${Math.round(r.framesPerSecond || 0)} fps · ${kbps} kbps`;
+          }
+        });
+        $('#stats').textContent = out;
+      } catch (e) {}
+    }, 1000);
+  }
+
+  function setTally(on) { $('#tally').hidden = !on; document.body.classList.toggle('live-on-screen', on); }
+
+  async function flip() {
+    facing = facing === 'environment' ? 'user' : 'environment'; save({ facing });
+    try {
+      await openCamera();
+      const pc = call && call.peerConnection;
+      const sender = pc && pc.getSenders().find(s => s.track && s.track.kind === 'video');
+      if (sender) await sender.replaceTrack(stream.getVideoTracks()[0]);
+      else if (want) dial();
+    } catch (err) { say('Could not switch camera: ' + (err.message || err.name), true); }
+  }
+  async function torch() {
+    const t = stream && stream.getVideoTracks()[0]; if (!t) return;
+    torchOn = !torchOn;
+    try { await t.applyConstraints({ advanced: [{ torch: torchOn }] }); } catch (e) { torchOn = false; }
+    $('#light').textContent = torchOn ? 'Torch off' : 'Torch';
+  }
+  function stop() {
+    want = false; clearTimeout(retryTimer); clearInterval(statsTimer);
+    if (call) { try { call.close(); } catch (e) {} call = null; }
+    if (conn) { try { conn.close(); } catch (e) {} conn = null; }
+    if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    video.srcObject = null; setTally(false);
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+    state('', 'Not connected'); say('Stopped. Tap the button to go live again.');
+    $('#sheet').hidden = false; $('#bar').hidden = true; $('#stats').hidden = true;
+  }
+  async function keepAwake() {
+    try { if ('wakeLock' in navigator && document.visibilityState === 'visible') wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !want) return;
+    keepAwake();
+    // phones stop the camera in the background; bring it back
+    const t = stream && stream.getVideoTracks()[0];
+    if (!t || t.readyState === 'ended') openCamera().then(() => {
+      const pc = call && call.peerConnection, sender = pc && pc.getSenders().find(s => s.kind === 'video' || (s.track && s.track.kind === 'video'));
+      if (sender) sender.replaceTrack(stream.getVideoTracks()[0]).catch(() => dial()); else dial();
+    }).catch(() => {});
+  });
+
+  $('#sheet').addEventListener('submit', start);
+  $('#flip').addEventListener('click', flip);
+  $('#light').addEventListener('click', torch);
+  $('#stop').addEventListener('click', stop);
+  codeIn.addEventListener('input', () => { codeIn.value = codeIn.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4); });
+  if (!window.Peer) say('The connection library did not load. Check the internet connection and reload.', true);
+  else if (codeIn.value.length === 4) say('Code ' + codeIn.value + ' filled in from the QR code. Tap the button to go live.');
+  window.__phone = { get call() { return call; }, get peer() { return peer; } };
+})();
+</script>
+</body>
+</html>
