@@ -63,7 +63,7 @@
     position: fixed; left: 0; right: 0; bottom: 0; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 10px;
     padding: 12px 16px calc(env(safe-area-inset-bottom, 0px) + 12px); background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,.75));
   }
-  .stats { position: fixed; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 84px); font: 500 11px var(--font-mono); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px #000; }
+  .stats { position: fixed; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 84px); font: 500 11px/1.5 var(--font-mono); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px #000; white-space: pre-line; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -77,7 +77,7 @@
 
 <form class="sheet" id="sheet" autocomplete="off">
   <h1>Phone camera</h1>
-  <p>Sends this phone's camera live to the SPECIALZ stage program. Type the 4-letter code shown on the computer, or scan its QR code.</p>
+  <p>Sends this phone's camera live to the SPECIALZ stage program. Scan the QR code on the computer, or type its 4-letter code here.</p>
   <div class="two">
     <div class="field"><label for="code">Stage code</label><input id="code" name="code" maxlength="4" inputmode="text" autocapitalize="characters" spellcheck="false" placeholder="K7Q2" required></div>
     <div class="field"><label for="res">Quality</label>
@@ -104,21 +104,42 @@
   const qs = new URLSearchParams(location.search);
   const video = $('#v'), codeIn = $('#code'), resSel = $('#res'), msg = $('#msg');
   const RES = { 480: [854, 480, 1.2e6], 720: [1280, 720, 2.5e6], 1080: [1920, 1080, 4.5e6] };
+  // STUN finds the direct route between phone and computer; TURN is the slow last resort.
+  const ICE = { iceServers: [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' }
+  ], sdpSemantics: 'unified-plan' };
   let stream = null, peer = null, call = null, conn = null, facing = 'environment', want = false, retryTimer = 0, torchOn = false, wakeLock = null, statsTimer = 0;
+  const T = { start: 0, cam: 0, relay: 0, live: 0 };     // timing, shown on screen so slow steps are easy to spot
 
   const saved = (() => { try { return JSON.parse(localStorage.getItem('specialz-phone') || '{}'); } catch (e) { return {}; } })();
   const save = patch => { try { localStorage.setItem('specialz-phone', JSON.stringify(Object.assign(saved, patch))); } catch (e) {} };
+  const fromQr = /^[A-Z0-9]{4}$/i.test(qs.get('room') || '');
   codeIn.value = (qs.get('room') || saved.code || '').toUpperCase().slice(0, 4);
   if (saved.res) resSel.value = saved.res;
   if (saved.facing) facing = saved.facing;
 
   function peerOptions() {
-    const o = { debug: 0 };
+    const o = { debug: 0, config: ICE };
     if (qs.get('peerhost')) { o.host = qs.get('peerhost'); o.port = Number(qs.get('peerport') || 443); o.path = qs.get('peerpath') || '/'; o.secure = qs.get('peersecure') !== '0'; }
     return o;
   }
   function state(kind, text) { $('#dot').className = 'dot ' + kind; $('#state').textContent = text; }
   function say(text, err) { msg.textContent = text; msg.classList.toggle('err', !!err); }
+  const secs = ms => (ms / 1000).toFixed(1) + ' s';
+
+  // Connect to the relay as soon as the page opens, so it's ready by the time the camera is.
+  function ensurePeer() {
+    if (peer && !peer.destroyed) return peer;
+    if (!window.Peer) return null;
+    const p = new window.Peer('specialz-phone-' + Math.random().toString(36).slice(2, 10), peerOptions());
+    peer = p;
+    p.on('open', () => { if (peer !== p) return; T.relay = performance.now(); if (want && stream) dial(); });
+    p.on('error', onError);
+    p.on('disconnected', () => { if (peer === p && !p.destroyed) setTimeout(() => { if (peer === p && !p.destroyed && p.disconnected) { try { p.reconnect(); } catch (e) { retry(); } } }, 1000); });
+    return p;
+  }
 
   async function openCamera() {
     const [w, h] = RES[resSel.value] || RES[720];
@@ -137,16 +158,24 @@
     return stream;
   }
 
-  async function start(e) {
+  async function start(e, auto) {
     if (e) e.preventDefault();
     const code = codeIn.value.trim().toUpperCase();
     if (!/^[A-Z0-9]{4}$/.test(code)) { say('Type the 4-character code from the computer screen.', true); codeIn.focus(); return; }
     if (!window.isSecureContext || !navigator.mediaDevices) { say('The camera only works when this page is opened over https.', true); return; }
     if (!window.Peer) { say('The connection library did not load. Check the internet connection and reload.', true); return; }
     save({ code, res: resSel.value });
-    $('#go').disabled = true; say('Opening the camera…');
-    try { await openCamera(); }
-    catch (err) { $('#go').disabled = false; say(err.name === 'NotAllowedError' ? 'Camera permission was denied. Allow camera access for this site in the browser settings, then try again.' : 'Could not open the camera: ' + (err.message || err.name), true); return; }
+    T.start = performance.now(); T.live = 0;
+    $('#go').disabled = true; say(auto ? 'Opening the camera for stage ' + code + '…' : 'Opening the camera…');
+    state('warn', 'Opening camera…');
+    ensurePeer();
+    try { await openCamera(); T.cam = performance.now(); }
+    catch (err) {
+      $('#go').disabled = false; state('', 'Not connected');
+      if (auto) { say('Tap the button to allow the camera.'); return; }
+      say(err.name === 'NotAllowedError' ? 'Camera permission was denied. Allow camera access for this site in the browser settings, then try again.' : 'Could not open the camera: ' + (err.message || err.name), true);
+      return;
+    }
     want = true;
     $('#sheet').hidden = true; $('#bar').hidden = false; $('#stats').hidden = false;
     $('#go').disabled = false;
@@ -157,60 +186,81 @@
   function connect() {
     clearTimeout(retryTimer);
     if (!want) return;
-    const code = codeIn.value.trim().toUpperCase();
-    state('warn', 'Connecting to stage ' + code + '…');
-    if (!peer || peer.destroyed) {
-      peer = new window.Peer(undefined, peerOptions());
-      peer.on('open', dial);
-      peer.on('error', onError);
-      peer.on('disconnected', () => { if (want && peer && !peer.destroyed) setTimeout(() => { try { peer.reconnect(); } catch (e) { retry(); } }, 1200); });
-    } else if (peer.open) dial();
-    else if (peer.disconnected) { try { peer.reconnect(); } catch (e) { peer.destroy(); retry(); } }
+    state('warn', 'Reaching the stage…');
+    const p = ensurePeer();
+    if (!p) { retry(); return; }
+    if (p.open) dial();
+    else if (p.disconnected && !p.destroyed) { try { p.reconnect(); } catch (e) { p.destroy(); retry(); } }
+    // otherwise the 'open' handler dials
   }
 
   function dial() {
-    if (!want) return;
+    if (!want || !stream || !peer || !peer.open) return;
     const code = codeIn.value.trim().toUpperCase();
+    state('warn', 'Found the relay, calling stage ' + code + '…');
     if (call) { const old = call; call = null; try { old.close(); } catch (e) {} }
     if (conn) { const old = conn; conn = null; try { old.close(); } catch (e) {} }
     const c = peer.call(PREFIX + code, stream);
     if (!c) { retry(); return; }
     call = c;
-    c.on('close', () => { if (call === c) { call = null; setTally(false); state('warn', 'Stage closed the link. Reconnecting…'); retry(); } });
-    c.on('error', () => { if (call === c) retry(); });
+    c.on('close', () => { if (call === c) { call = null; setTally(false); state('warn', 'Stage closed the link. Reconnecting…'); retry(1000); } });
+    c.on('error', () => { if (call === c) retry(1000); });
     const watch = () => {
       const pc = c.peerConnection;
-      if (!pc) { setTimeout(watch, 100); return; }
+      if (!pc) { setTimeout(watch, 50); return; }
+      tuneSender(pc);
       pc.addEventListener('connectionstatechange', () => {
         if (call !== c) return;
-        if (pc.connectionState === 'connected') { state('ok', 'Live to stage ' + code); tuneBitrate(pc); }
-        else if (pc.connectionState === 'failed') { state('err', 'Connection failed. Retrying…'); retry(); }
+        if (pc.connectionState === 'connected') {
+          if (!T.live) T.live = performance.now();
+          state('ok', 'Live to stage ' + code);
+          $('#sheet').hidden = true; say('');
+          openTally(code);
+          describeRoute(pc);
+        }
+        else if (pc.connectionState === 'failed') { state('err', 'Connection failed. Retrying…'); retry(1000); }
         else if (pc.connectionState === 'disconnected') state('warn', 'Signal weak. Holding on…');
       });
     };
     watch();
+  }
+  // the ON SCREEN light uses a small data link, opened after the video so it doesn't slow it down
+  function openTally(code) {
+    if (conn && conn.open) return;
     conn = peer.connect(PREFIX + code, { reliable: true });
     conn.on('data', d => { if (d && d.type === 'tally') setTally(!!d.live); });
   }
 
   function onError(err) {
     const code = codeIn.value.trim().toUpperCase();
-    if (err.type === 'peer-unavailable') { state('err', 'No stage with code ' + code); say('No stage program with code ' + code + ' is online. Check the code on the computer. Retrying…', true); retry(4000); return; }
+    if (err.type === 'peer-unavailable') {
+      if (!want) return;
+      state('err', 'No stage with code ' + code); say('No stage program with code ' + code + ' is online. Check the code on the computer. Retrying…', true);
+      $('#sheet').hidden = false; retry(2000); return;
+    }
     if (err.type === 'browser-incompatible') { state('err', 'Browser not supported'); say('This browser cannot send live video. Use Safari on iPhone or Chrome on Android.', true); stop(); return; }
+    if (err.type === 'unavailable-id') { if (peer) { try { peer.destroy(); } catch (e) {} peer = null; } ensurePeer(); return; }
     state('err', 'Can’t reach the relay'); say('Can’t reach the connection relay. Check that the phone has internet. Retrying…', true);
     if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
-    retry(3000);
+    retry(2000);
   }
-  function retry(ms = 2500) { if (!want) return; clearTimeout(retryTimer); retryTimer = setTimeout(connect, ms); }
+  function retry(ms = 2000) { if (!want) return; clearTimeout(retryTimer); retryTimer = setTimeout(connect, ms); }
 
-  function tuneBitrate(pc) {
+  // Send full resolution from the first second instead of starting tiny and blurry.
+  async function tuneSender(pc) {
     const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
     if (!sender || !sender.getParameters) return;
-    const p = sender.getParameters();
-    if (!p.encodings || !p.encodings.length) p.encodings = [{}];
-    p.encodings[0].maxBitrate = (RES[resSel.value] || RES[720])[2];
-    p.encodings[0].maxFramerate = 30;
-    sender.setParameters(p).catch(() => {});
+    try {
+      const p = sender.getParameters();
+      if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+      p.encodings[0].maxBitrate = (RES[resSel.value] || RES[720])[2];
+      p.encodings[0].maxFramerate = 30;
+      p.encodings[0].scaleResolutionDownBy = 1;
+      await sender.setParameters(p);
+    } catch (e) {}
+    try { const p = sender.getParameters(); p.degradationPreference = 'maintain-resolution'; await sender.setParameters(p); } catch (e) {}
+    // once the link has warmed up, let it trade a little sharpness for smoothness if the Wi-Fi dips
+    setTimeout(async () => { if (call && call.peerConnection === pc) { try { const p = sender.getParameters(); p.degradationPreference = 'balanced'; await sender.setParameters(p); } catch (e) {} } }, 10000);
     clearInterval(statsTimer);
     let lastBytes = 0, lastT = 0;
     statsTimer = setInterval(async () => {
@@ -224,9 +274,21 @@
             out = `${r.frameWidth || '?'}×${r.frameHeight || '?'} · ${Math.round(r.framesPerSecond || 0)} fps · ${kbps} kbps`;
           }
         });
-        $('#stats').textContent = out;
+        const timing = T.live ? `connected in ${secs(T.live - T.start)} (camera ${secs(T.cam - T.start)})` : '';
+        $('#stats').textContent = [out, timing, route].filter(Boolean).join('\n');
       } catch (e) {}
     }, 1000);
+  }
+  let route = '';
+  async function describeRoute(pc) {
+    try {
+      const rep = await pc.getStats(); let pair = null; const byId = {};
+      rep.forEach(r => { byId[r.id] = r; });
+      rep.forEach(r => { if (r.type === 'transport' && r.selectedCandidatePairId) pair = byId[r.selectedCandidatePairId]; });
+      if (!pair) rep.forEach(r => { if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') pair = r; });
+      const local = pair && byId[pair.localCandidateId], type = local && local.candidateType;
+      route = type === 'host' ? 'direct on Wi-Fi' : type === 'relay' ? 'through a relay server (slower)' : type ? 'direct over the internet' : '';
+    } catch (e) {}
   }
 
   function setTally(on) { $('#tally').hidden = !on; document.body.classList.toggle('live-on-screen', on); }
@@ -251,7 +313,6 @@
     want = false; clearTimeout(retryTimer); clearInterval(statsTimer);
     if (call) { try { call.close(); } catch (e) {} call = null; }
     if (conn) { try { conn.close(); } catch (e) {} conn = null; }
-    if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     video.srcObject = null; setTally(false);
     if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
@@ -267,7 +328,7 @@
     // phones stop the camera in the background; bring it back
     const t = stream && stream.getVideoTracks()[0];
     if (!t || t.readyState === 'ended') openCamera().then(() => {
-      const pc = call && call.peerConnection, sender = pc && pc.getSenders().find(s => s.kind === 'video' || (s.track && s.track.kind === 'video'));
+      const pc = call && call.peerConnection, sender = pc && pc.getSenders().find(s => s.track && s.track.kind === 'video');
       if (sender) sender.replaceTrack(stream.getVideoTracks()[0]).catch(() => dial()); else dial();
     }).catch(() => {});
   });
@@ -278,8 +339,12 @@
   $('#stop').addEventListener('click', stop);
   codeIn.addEventListener('input', () => { codeIn.value = codeIn.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4); });
   if (!window.Peer) say('The connection library did not load. Check the internet connection and reload.', true);
-  else if (codeIn.value.length === 4) say('Code ' + codeIn.value + ' filled in from the QR code. Tap the button to go live.');
-  window.__phone = { get call() { return call; }, get peer() { return peer; } };
+  else {
+    ensurePeer();
+    // opened from the stage's QR code: go straight to the camera, no extra tap
+    if (fromQr) start(null, true);
+  }
+  window.__phone = { get call() { return call; }, get peer() { return peer; }, T };
 })();
 </script>
 </body>
