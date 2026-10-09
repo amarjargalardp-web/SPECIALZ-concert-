@@ -1279,8 +1279,36 @@
   // ---- phone link (receiver) ----
   const PREFIX = 'specialz-stage-';
   const qs = new URLSearchParams(location.search);
+  // STUN finds the direct route between phone and computer; TURN is the slow last resort.
+  const ICE = { iceServers: [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' }
+  ], sdpSemantics: 'unified-plan' };
+  // Ask Android phones (Chrome) to start sending at a useful bitrate instead of ramping up from almost nothing.
+  function startBitrate(sdp) {
+    try {
+      const lines = sdp.split('\r\n'), out = [];
+      let inVideo = false; const pts = new Set(), withFmtp = new Set();
+      for (const l of lines) {
+        if (l.startsWith('m=')) inVideo = l.startsWith('m=video');
+        const m = inVideo && /^a=rtpmap:(\d+) (VP8|VP9|H264|AV1)\//i.exec(l); if (m) pts.add(m[1]);
+        const f = inVideo && /^a=fmtp:(\d+) /.exec(l); if (f) withFmtp.add(f[1]);
+      }
+      inVideo = false;
+      for (const l of lines) {
+        if (l.startsWith('m=')) inVideo = l.startsWith('m=video');
+        const f = inVideo && /^a=fmtp:(\d+) (.*)$/.exec(l);
+        if (f && pts.has(f[1]) && !/x-google-start-bitrate/.test(l)) { out.push(l + ';x-google-start-bitrate=1800'); continue; }
+        out.push(l);
+        const m = inVideo && /^a=rtpmap:(\d+) /.exec(l);
+        if (m && pts.has(m[1]) && !withFmtp.has(m[1])) out.push(`a=fmtp:${m[1]} x-google-start-bitrate=1800`);
+      }
+      return out.join('\r\n');
+    } catch (e) { return sdp; }
+  }
   function peerOptions() {
-    const o = { debug: 0 };
+    const o = { debug: 0, config: ICE };
     if (qs.get('peerhost')) { o.host = qs.get('peerhost'); o.port = Number(qs.get('peerport') || 443); o.path = qs.get('peerpath') || '/'; o.secure = qs.get('peersecure') !== '0'; }
     return o;
   }
@@ -1344,8 +1372,19 @@
     peer.on('call', call => {
       if (link.call && link.call !== call) { try { link.call.close(); } catch (e) {} }
       link.call = call;
-      call.answer();
-      call.on('stream', s => { cam.phoneStream = s; cam.source = 'phone'; refreshVideo(); setLink('ok', 'Phone connected'); });
+      const t0 = performance.now();
+      setLink('wait', 'Phone found. Starting video…');
+      call.answer(undefined, qs.get('nostartrate') ? undefined : { sdpTransform: startBitrate });
+      call.on('stream', s => {
+        cam.phoneStream = s; cam.source = 'phone'; refreshVideo();
+        const pv = $('#pv'), shown = () => {
+          if (link.call !== call) return;
+          const secs = ((performance.now() - t0) / 1000).toFixed(1);
+          routeOf(call.peerConnection).then(r => setLink('ok', `Phone connected · ${r || 'live'} · picture in ${secs} s` +
+            (/relay/.test(r) ? '. Put the phone and computer on the same Wi-Fi (or the computer on the phone’s hotspot) for a faster link.' : '')));
+        };
+        if (pv.videoWidth > 0) shown(); else pv.addEventListener('loadeddata', shown, { once: true });
+      });
       const lost = () => { if (link.call === call) { link.call = null; cam.phoneStream = null; refreshVideo(); setLink('wait', 'Phone disconnected. Waiting for it to reconnect…'); } };
       call.on('close', lost); call.on('error', lost);
       const pc = call.peerConnection;
@@ -1370,6 +1409,17 @@
       link.retry++;
       scheduleRestart(Math.min(15000, 2000 * link.retry), insideClaude ? 'The claude.ai preview blocks the phone link. Open the GitHub Pages copy instead.' : 'Can’t reach the phone relay (needs internet). Retrying…');
     });
+  }
+  // which path the video took: direct on the local network, direct over the internet, or through a relay server
+  async function routeOf(pc) {
+    try {
+      const rep = await pc.getStats(); let pair = null; const byId = {};
+      rep.forEach(r => { byId[r.id] = r; });
+      rep.forEach(r => { if (r.type === 'transport' && r.selectedCandidatePairId) pair = byId[r.selectedCandidatePairId]; });
+      if (!pair) rep.forEach(r => { if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') pair = r; });
+      const type = pair && byId[pair.localCandidateId] && byId[pair.localCandidateId].candidateType;
+      return type === 'host' ? 'direct on Wi-Fi' : type === 'relay' ? 'via relay server (slower)' : type ? 'direct via internet' : '';
+    } catch (e) { return ''; }
   }
   function sendTally() {
     const live = (current === 'c' || cam.overlay) && cam.source === 'phone';

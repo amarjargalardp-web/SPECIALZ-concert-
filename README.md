@@ -57,8 +57,11 @@ Then on the night:
 
 1. On the computer, open `https://amarjargalardp-web.github.io/SPECIALZ-concert-/Special_project_SPECIALZ.html` in Chrome or Edge.
    The panel shows a 4-letter code and a QR code. The code stays the same between reloads.
-2. On the phone, scan the QR code and tap **Start camera and connect**. Keep the phone screen on and the page open.
+2. On the phone, scan the QR code and allow the camera. It goes live by itself. Keep the phone screen on and the page open.
 3. Press **C** to show the phone, **V** to change the look, **X** to mix it over the visuals. The phone shows **ON SCREEN** while it is being used.
+
+The computer panel shows how the phone is connected and how long the picture took.
+If it says *via relay server*, put both devices on the same Wi-Fi, or connect the computer to the phone's hotspot, for a faster, steadier link.
 
 No internet at the venue? Use a webcam app instead (iPhone Continuity Camera on a Mac, DroidCam, Camo, Iriun, or Windows Phone Link).
 The phone then shows up as a camera on the computer: pick it under **Computer cam** in the panel and choose **Computer cam** as the source.
